@@ -40,7 +40,7 @@ func Format(diags []delta.Diag, opts Options) string {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "agent-squiggles: this change introduced %s. Pre-existing problems are not listed.\n", counts(errors, warnings))
+	fmt.Fprintf(&b, "agent-squiggles: your last edit introduced %s (pre-existing problems are not listed).\n", counts(errors, warnings))
 	shown := diags
 	if opts.Max > 0 && len(shown) > opts.Max {
 		shown = shown[:opts.Max]
@@ -81,7 +81,9 @@ func Format(diags []delta.Diag, opts Options) string {
 	if rest := len(diags) - len(shown); rest > 0 {
 		fmt.Fprintf(&b, "\n…and %d more.\n", rest)
 	}
-	b.WriteString("\nFix these before moving on, unless they are expected mid-refactor.")
+	b.WriteString("\nThese errors come from the language server and were caused by that edit, including the ones in files you did not edit. " +
+		"The code will not compile or type-check until they are fixed: fix them before you finish, " +
+		"or tell the user why they should remain.")
 	return b.String()
 }
 

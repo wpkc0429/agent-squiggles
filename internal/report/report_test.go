@@ -23,7 +23,8 @@ func TestFormat(t *testing.T) {
 		},
 	})
 	for _, want := range []string{
-		"introduced 2 new errors and 1 new warning",
+		"your last edit introduced 2 new errors and 1 new warning",
+		"fix them before you finish",
 		"a/a.go:3:6: error: undefined: x [compiler]\n    func F() { x }",
 		"main.go:9:38: error: not enough arguments in call to a.Greet; have (string); want (string, int) [compiler] (in a file you did not edit)\n    fmt.Println(a.Greet(\"x\"))",
 		"…and 1 more.",
