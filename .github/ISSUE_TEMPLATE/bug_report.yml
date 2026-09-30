@@ -1,0 +1,41 @@
+name: Bug report
+description: Something was reported that should not have been, something was missed, or something broke.
+labels: [bug]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong?
+      options:
+        - A pre-existing error was reported as new (false positive)
+        - A new error was not reported (false negative)
+        - The hook failed, hung, or slowed Codex down
+        - Installation or setup problem
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Description
+      description: What did the agent do, what did agent-squiggles report, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: A minimal repository or the smallest files and edit that reproduce it.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `agent-squiggles doctor`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Daemon log excerpt
+      description: The log path is printed by `agent-squiggles doctor`.
+      render: text

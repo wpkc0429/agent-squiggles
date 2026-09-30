@@ -1,0 +1,82 @@
+# Reviews pull requests with Codex (openai/codex-action) and posts the
+# review as a comment. Runs only when the OPENAI_API_KEY secret is set, so
+# forks and clones without it skip quietly.
+name: Codex review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
+    steps:
+      - name: Skip without an API key
+        if: env.HAS_KEY != 'true'
+        run: echo "OPENAI_API_KEY is not configured; skipping the Codex review."
+
+      - uses: actions/checkout@v7
+        if: env.HAS_KEY == 'true'
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          persist-credentials: false
+
+      - name: Fetch base and head
+        if: env.HAS_KEY == 'true'
+        env:
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "$PR_BASE_REF" "+refs/pull/$PR_NUMBER/head"
+
+      - name: Run Codex
+        id: run_codex
+        if: env.HAS_KEY == 'true'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: read-only
+          prompt: |
+            You are reviewing pull request #${{ github.event.pull_request.number }} for ${{ github.repository }},
+            a Codex hook that reports only the diagnostics an edit introduced.
+
+            Read AGENTS.md and docs/design.md first. Then review ONLY the changes in:
+              git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+
+            Focus on, in order:
+            1. Correctness of change detection and diagnostic matching: anything that could report a
+               pre-existing error as new, or miss a new one.
+            2. Anything that could make a Codex tool call fail, hang, or slow down noticeably.
+            3. Security: running code chosen by an untrusted repository, touching the user's git index
+               or refs, or exposing the daemon socket.
+            4. Missing tests.
+
+            Be concise. Quote file:line for each point. If there is nothing important, say so in one line.
+
+  post:
+    needs: review
+    if: needs.review.outputs.final_message != ''
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v9
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.review.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `### Codex review\n\n${process.env.CODEX_FINAL_MESSAGE}`,
+            });

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, go: stable }
+          - { os: ubuntu-latest, go: "1.22" }
+          - { os: macos-latest, go: stable }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+      - name: gofmt
+        if: matrix.go == 'stable'
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  integration:
+    name: integration (real language servers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install language servers with agent-squiggles itself
+        run: go run ./cmd/agent-squiggles servers install go typescript python
+      - name: Install TypeScript 6 for the typescript-language-server path
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ts6" --no-audit --no-fund typescript@6
+          echo "TS6_DIR=$RUNNER_TEMP/ts6" >> "$GITHUB_ENV"
+          echo "TS6_LIB=$RUNNER_TEMP/ts6/node_modules/typescript/lib" >> "$GITHUB_ENV"
+      - run: go test -tags integration -count=1 -v ./internal/engine/ ./internal/lsp/
