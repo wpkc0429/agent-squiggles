@@ -8,6 +8,10 @@
 
 agent-squiggles 是一個 [Codex hook](https://learn.chatgpt.com/docs/hooks)。每次編輯後，它會問真正的語言伺服器（gopls、TypeScript、pyright）這次改動弄壞了什麼，然後**只把這次編輯新增的錯誤**交給 Codex，包括 agent 從沒打開過的檔案。
 
+![Codex 修改 greet.Hello，agent-squiggles 回報 main.go 壞掉的呼叫，Codex 接著修好](docs/assets/demo.gif)
+
+<sub>真實的 Codex CLI 操作錄影（gpt-5.6-luna，medium）：Codex 改了簽名，agent-squiggles 在 0.34 秒後回報 <code>main.go</code> 的呼叫壞了，Codex 沒有跑編譯器就把它修好。錄影時使用 <code>--dangerously-bypass-hook-trust</code>，讓 hook 不必經過互動式的 <code>/hooks</code> 審核就能執行。</sub>
+
 這是針對 [openai/codex#8745](https://github.com/openai/codex/issues/8745)（Codex repo 票數最高的 open issue：「LSP integration (auto-detect + auto-install)」）的解法，只用 Codex 現有的 hook API 就能運作。
 
 ## Agent 會看到什麼
@@ -15,12 +19,12 @@ agent-squiggles 是一個 [Codex hook](https://learn.chatgpt.com/docs/hooks)。�
 假設 Codex 在 `greet/greet.go` 幫 `greet.Hello` 加了一個參數，但沒打開 `main.go`。`apply_patch` 一結束，agent 就會收到：
 
 ```text
-agent-squiggles: this change introduced 1 new error. Pre-existing problems are not listed.
+agent-squiggles: your last edit introduced 1 new error (pre-existing problems are not listed).
 
 main.go:10:33: error: not enough arguments in call to greet.Hello; have (string); want (string, bool) [compiler WrongArgCount] (in a file you did not edit)
     fmt.Println(greet.Hello("world"))
 
-Fix these before moving on, unless they are expected mid-refactor.
+These errors come from the language server and were caused by that edit, including the ones in files you did not edit. The code will not compile or type-check until they are fixed: fix them before you finish, or tell the user why they should remain.
 ```
 
 在我們用 Codex CLI 做的端到端測試裡，agent 回了「The editor reports one expected caller error in `main.go`, so I'm updating that call」，接著就把它修好了。整個過程它沒有跑編譯器，也沒有主動打開 `main.go`。
@@ -40,9 +44,11 @@ Fix these before moving on, unless they are expected mid-refactor.
 需要支援 hook 的 Codex CLI、git，以及 Linux 或 macOS（Windows 請用 WSL）。
 
 ```sh
-go install github.com/wpkc0429/agent-squiggles/cmd/agent-squiggles@latest
+curl -fsSL https://raw.githubusercontent.com/wpkc0429/agent-squiggles/main/install.sh | sh
 agent-squiggles install
 ```
+
+這個腳本會從 [Releases](https://github.com/wpkc0429/agent-squiggles/releases) 下載預先編譯好的執行檔，驗證 checksum 後放到 `~/.local/bin`。有裝 Go 的話也可以改用 `go install github.com/wpkc0429/agent-squiggles/cmd/agent-squiggles@latest`。
 
 `install` 會在 `~/.codex/hooks.json` 加入三個 hook，你原本的其他 hook 會保留。它也會為目前 repo 偵測到的語言提議安裝語言伺服器。加上 `--project` 則改寫入 repo 內的 `.codex/hooks.json`。
 

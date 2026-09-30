@@ -16,6 +16,14 @@ After every edit it asks the real language server (gopls, TypeScript,
 pyright) what the edit broke. It then hands Codex **only the errors that edit
 introduced**, including errors in files the agent never opened.
 
+![Codex edits greet.Hello, agent-squiggles reports the broken caller in main.go, Codex fixes it](docs/assets/demo.gif)
+
+<sub>A real Codex CLI session (gpt-5.6-luna, medium). Codex changes the
+signature, agent-squiggles reports the broken caller in <code>main.go</code>
+344 ms later, and Codex fixes it without running the compiler. Recorded with
+<code>--dangerously-bypass-hook-trust</code> so the hooks ran without the
+interactive <code>/hooks</code> review.</sub>
+
 It is an answer to [openai/codex#8745](https://github.com/openai/codex/issues/8745)
 ("LSP integration (auto-detect + auto-install)"), the most upvoted open issue
 in the Codex repository, built with the hook API Codex already ships.
@@ -26,12 +34,12 @@ Suppose Codex adds a parameter to `greet.Hello` in `greet/greet.go` without
 opening `main.go`. Right after the `apply_patch`, the agent gets:
 
 ```text
-agent-squiggles: this change introduced 1 new error. Pre-existing problems are not listed.
+agent-squiggles: your last edit introduced 1 new error (pre-existing problems are not listed).
 
 main.go:10:33: error: not enough arguments in call to greet.Hello; have (string); want (string, bool) [compiler WrongArgCount] (in a file you did not edit)
     fmt.Println(greet.Hello("world"))
 
-Fix these before moving on, unless they are expected mid-refactor.
+These errors come from the language server and were caused by that edit, including the ones in files you did not edit. The code will not compile or type-check until they are fixed: fix them before you finish, or tell the user why they should remain.
 ```
 
 In our end-to-end test with Codex CLI, the agent replied *"The editor reports
@@ -71,9 +79,15 @@ Requires Codex CLI with hooks support, git, and Linux or macOS (on Windows,
 use WSL).
 
 ```sh
-go install github.com/wpkc0429/agent-squiggles/cmd/agent-squiggles@latest
+curl -fsSL https://raw.githubusercontent.com/wpkc0429/agent-squiggles/main/install.sh | sh
 agent-squiggles install
 ```
+
+The script downloads a prebuilt binary from
+[Releases](https://github.com/wpkc0429/agent-squiggles/releases), verifies
+its checksum, and puts it in `~/.local/bin`. With Go installed you can use
+`go install github.com/wpkc0429/agent-squiggles/cmd/agent-squiggles@latest`
+instead.
 
 `install` adds three hooks to `~/.codex/hooks.json`, keeping any hooks you
 already have. It also offers to install language servers for the languages

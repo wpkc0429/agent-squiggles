@@ -6,6 +6,10 @@ uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-30
+
+First release.
+
 ### Added
 
 - Codex hooks (`SessionStart`, `PreToolUse`, `PostToolUse`) that report only
@@ -22,3 +26,8 @@ uses [semantic versioning](https://semver.org/).
   `stop`, `version`.
 - Configuration through `.agent-squiggles.json` and
   `~/.config/agent-squiggles/config.json`.
+- Security: project-local language servers and project config are only used
+  for projects Codex trusts, and the daemon socket directory must be private.
+
+[Unreleased]: https://github.com/wpkc0429/agent-squiggles/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/wpkc0429/agent-squiggles/releases/tag/v0.1.0
