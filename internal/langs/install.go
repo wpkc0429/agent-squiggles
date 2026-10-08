@@ -131,6 +131,8 @@ func installSteps(l *Language) ([]step, error) {
 			{argv: []string{py, "-m", "venv", venv}},
 			{argv: []string{filepath.Join(venv, "bin", "pip"), "install", "--quiet", "basedpyright"}},
 		}, nil
+	case Rust:
+		return nil, fmt.Errorf("agent-squiggles does not install Rust; install it with rustup: https://rustup.rs")
 	}
 	return nil, fmt.Errorf("unsupported language %q", l.ID)
 }

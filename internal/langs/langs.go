@@ -29,6 +29,12 @@ type Language struct {
 	// Deps is the import syntax scanned to find dependents, or "" when the
 	// server already reports diagnostics for files that are not open.
 	Deps deps.Kind
+	// Files are exact file names that also belong to the language, such as
+	// Cargo.toml, whose edits can break the build.
+	Files []string
+	// Batch languages are checked by a whole-project command (cargo check)
+	// instead of a language server.
+	Batch bool
 }
 
 var (
@@ -49,10 +55,17 @@ var (
 		Markers:    []string{"pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"},
 		Deps:       deps.Python,
 	}
+	Rust = &Language{
+		ID: "rust", Name: "Rust",
+		Extensions: []string{".rs"},
+		Files:      []string{"Cargo.toml"},
+		Markers:    []string{"Cargo.toml"},
+		Batch:      true,
+	}
 )
 
 // All returns every supported language.
-func All() []*Language { return []*Language{Go, TypeScript, Python} }
+func All() []*Language { return []*Language{Go, TypeScript, Python, Rust} }
 
 // ByID returns the language with the given ID, or nil.
 func ByID(id string) *Language {
@@ -70,9 +83,15 @@ func ForPath(path string) *Language {
 		return nil // declaration files are rarely edited and noisy to check
 	}
 	ext := strings.ToLower(filepath.Ext(path))
+	base := filepath.Base(path)
 	for _, l := range All() {
 		for _, e := range l.Extensions {
 			if e == ext {
+				return l
+			}
+		}
+		for _, f := range l.Files {
+			if f == base {
 				return l
 			}
 		}
@@ -86,6 +105,9 @@ func Patterns(ls []*Language) []string {
 	for _, l := range ls {
 		for _, e := range l.Extensions {
 			out = append(out, "*"+e)
+		}
+		for _, f := range l.Files {
+			out = append(out, f, "*/"+f)
 		}
 	}
 	return out
@@ -113,6 +135,9 @@ func (l *Language) LanguageID(path string) string {
 // (but not above workspace) that contains one of the language's markers,
 // or workspace if none does.
 func (l *Language) ProjectRoot(file, workspace string) string {
+	if l == Rust {
+		return rustRoot(file, workspace)
+	}
 	dir := filepath.Dir(file)
 	for {
 		for _, m := range l.Markers {
@@ -135,6 +160,39 @@ func (l *Language) ProjectRoot(file, workspace string) string {
 		}
 		dir = parent
 	}
+}
+
+// rustRoot returns the outermost Cargo workspace containing file (cargo
+// checks a whole workspace at once), or the nearest package if there is no
+// workspace.
+func rustRoot(file, workspace string) string {
+	nearest, outer := "", ""
+	dir := filepath.Dir(file)
+	for {
+		if data, err := os.ReadFile(filepath.Join(dir, "Cargo.toml")); err == nil {
+			if nearest == "" {
+				nearest = dir
+			}
+			if strings.Contains(string(data), "[workspace]") {
+				outer = dir
+			}
+		}
+		if dir == workspace || !strings.HasPrefix(dir, workspace) {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	switch {
+	case outer != "":
+		return outer
+	case nearest != "":
+		return nearest
+	}
+	return workspace
 }
 
 func findUp(dir, stop, name string) string {
@@ -162,6 +220,9 @@ type Server struct {
 	Settle           lsp.SettleStrategy
 	Quiet            time.Duration
 	FirstPublishWait time.Duration
+	// Batch servers are commands run over the whole project (cargo check)
+	// rather than language servers.
+	Batch bool
 }
 
 // Options converts a Server into lsp.Options for a root.
@@ -189,7 +250,22 @@ type NotInstalledError struct {
 }
 
 func (e *NotInstalledError) Error() string {
-	return fmt.Sprintf("no %s language server found (%s)", e.Lang.Name, e.Hint)
+	what := "language server"
+	if e.Lang.Batch {
+		what = "toolchain"
+	}
+	return fmt.Sprintf("no %s %s found (%s)", e.Lang.Name, what, e.Hint)
+}
+
+// UntrustedError reports a language that is only checked in projects Codex
+// trusts, because checking it runs the project's own code.
+type UntrustedError struct {
+	Lang   *Language
+	Reason string
+}
+
+func (e *UntrustedError) Error() string {
+	return fmt.Sprintf("%s checks are off because Codex does not trust this project (%s)", e.Lang.Name, e.Reason)
 }
 
 // IsNotInstalled reports whether err is a NotInstalledError.
@@ -214,6 +290,8 @@ func Resolve(l *Language, projectRoot string, lc config.Language, trusted bool) 
 		s, err = resolveTypeScript(projectRoot, lc, trusted)
 	case Python:
 		s, err = resolvePython(projectRoot, lc, trusted)
+	case Rust:
+		s, err = resolveRust(lc, trusted)
 	default:
 		return nil, fmt.Errorf("unsupported language %q", l.ID)
 	}
@@ -322,6 +400,23 @@ func resolveTypeScript(projectRoot string, lc config.Language, trusted bool) (*S
 		return native(bin, "tsgo --lsp"), nil
 	}
 	return nil, notInstalled
+}
+
+func resolveRust(lc config.Language, trusted bool) (*Server, error) {
+	if !trusted {
+		// cargo check compiles build scripts and proc macros and runs them.
+		return nil, &UntrustedError{Lang: Rust, Reason: "cargo check runs build scripts and proc macros"}
+	}
+	command := lc.Command
+	if len(command) == 0 {
+		home, _ := os.UserHomeDir()
+		bin := firstExisting(lookPath("cargo"), filepath.Join(home, ".cargo", "bin", "cargo"))
+		if bin == "" {
+			return nil, &NotInstalledError{Lang: Rust, Hint: "install Rust with rustup: https://rustup.rs"}
+		}
+		command = []string{bin}
+	}
+	return &Server{Name: "cargo check", Command: command, Batch: true}, nil
 }
 
 func hasPyrightConfig(projectRoot string) bool {

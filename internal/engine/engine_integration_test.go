@@ -64,11 +64,15 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, root string) *harness {
+	return newHarnessTrust(t, root, true)
+}
+
+func newHarnessTrust(t *testing.T, root string, trusted bool) *harness {
 	cfg := config.Defaults()
 	f := false
 	cfg.AutoInstall = &f
 	e := New(root, cfg, t.Logf)
-	e.SetTrusted(true)
+	e.SetTrusted(trusted)
 	t.Cleanup(e.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -260,4 +264,64 @@ func TestNonGitApplyPatch(t *testing.T) {
 		"main.go": str("package main\n\nfunc main() { nope() }\n"),
 	})
 	expect(t, res.New, "main.go: undefined: nope")
+}
+
+func rustRepo(t *testing.T) string {
+	return gitRepo(t, map[string]string{
+		".gitignore":                "/target\n",
+		"Cargo.toml":                "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n",
+		"crates/core/Cargo.toml":    "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+		"crates/core/src/lib.rs":    "pub mod greet;\npub mod use_it;\n\npub fn broken() -> i32 {\n    \"s\"\n}\n",
+		"crates/core/src/greet.rs":  "pub fn hello(name: &str) -> String {\n    format!(\"hi {name}\")\n}\n",
+		"crates/core/src/use_it.rs": "pub fn call() -> String {\n    crate::greet::hello(\"x\")\n}\n",
+	})
+}
+
+func TestRust(t *testing.T) {
+	root := rustRepo(t)
+	requireServer(t, langs.Rust, root)
+	h := newHarness(t, root)
+
+	// A signature change breaks the caller in use_it.rs; the existing E0308
+	// in lib.rs is not reported.
+	res := h.edit(ToolApplyPatch, "*** Begin Patch", map[string]*string{
+		"crates/core/src/greet.rs": str("pub fn hello(name: &str, excited: bool) -> String {\n    if excited { format!(\"hi {name}!\") } else { format!(\"hi {name}\") }\n}\n"),
+	})
+	expect(t, res.New, "use_it.rs: this function takes 2 arguments but 1 argument was supplied")
+	if res.New[0].Code != "E0061" || res.New[0].Source != "rustc" {
+		t.Fatalf("unexpected diagnostic %+v", res.New[0])
+	}
+
+	// Fixing the caller reports nothing; the baseline carried over without
+	// another run before the edit.
+	res = h.edit(ToolApplyPatch, "*** Begin Patch", map[string]*string{
+		"crates/core/src/use_it.rs": str("pub fn call() -> String {\n    crate::greet::hello(\"x\", false)\n}\n"),
+	})
+	expect(t, res.New)
+
+	// A broken manifest is reported on Cargo.toml.
+	res = h.edit(ToolBash, "sed -i ... crates/core/Cargo.toml", map[string]*string{
+		"crates/core/Cargo.toml": str("[package\nname = \"core\"\n"),
+	})
+	if len(res.New) != 1 || filepath.Base(res.New[0].Path) != "Cargo.toml" || res.New[0].Source != "cargo" {
+		t.Fatalf("manifest error: got %+v", res.New)
+	}
+}
+
+func TestRustUntrusted(t *testing.T) {
+	root := rustRepo(t)
+	requireServer(t, langs.Rust, root)
+	h := newHarnessTrust(t, root, false)
+	res := h.edit(ToolApplyPatch, "*** Begin Patch", map[string]*string{
+		"crates/core/src/greet.rs": str("pub fn hello() -> String { String::new() }\n"),
+	})
+	if len(res.New) != 0 {
+		t.Fatalf("untrusted project must not run cargo: %+v", res.New)
+	}
+	if len(res.Notices) == 0 || !strings.Contains(strings.Join(res.Notices, " "), "does not trust") {
+		t.Fatalf("expected a trust notice, got %v", res.Notices)
+	}
+	if _, err := os.Stat(filepath.Join(root, "target", "agent-squiggles")); err == nil {
+		t.Fatal("cargo ran in an untrusted project")
+	}
 }

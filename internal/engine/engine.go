@@ -73,10 +73,12 @@ type Engine struct {
 	pre      map[string]preState
 	notices  []string
 
-	checkMu    sync.Mutex // serializes language-server work
-	servers    map[string]*serverEntry
-	installing map[string]bool
-	warned     map[string]bool
+	checkMu       sync.Mutex // serializes language-server work and batch checks
+	servers       map[string]*serverEntry
+	installing    map[string]bool
+	warned        map[string]bool
+	batch         map[string]*batchState // batch project root -> last results
+	batchRootList map[string][]string    // language ID -> batch project roots
 }
 
 type preState struct {
@@ -117,6 +119,9 @@ func New(dir string, cfg config.Config, logf func(string, ...any)) *Engine {
 		servers:    map[string]*serverEntry{},
 		installing: map[string]bool{},
 		warned:     map[string]bool{},
+
+		batch:         map[string]*batchState{},
+		batchRootList: map[string][]string{},
 	}
 	repo, err := snapshot.Open(dir, paths.StateDir(), langs.Patterns(langs.All()))
 	if err == nil {
@@ -159,15 +164,19 @@ func (e *Engine) SetTrusted(trusted bool) {
 // for the languages the workspace root declares, so the first check is
 // fast.
 func (e *Engine) SessionStart(ctx context.Context) {
+	tree := ""
 	if e.repo != nil {
-		if tree, err := e.repo.Snapshot(); err == nil {
+		if t, err := e.repo.Snapshot(); err == nil {
+			tree = t
 			e.mu.Lock()
-			e.lastTree = tree
+			e.lastTree = t
 			e.mu.Unlock()
 		}
 	}
+	// Batch languages need a baseline run before the first edit.
+	e.refreshBatch(tree)
 	for _, l := range langs.All() {
-		if e.cfg.Languages[l.ID].Disabled {
+		if e.cfg.Languages[l.ID].Disabled || l.Batch {
 			continue
 		}
 		for _, m := range l.Markers {
@@ -208,6 +217,9 @@ func (e *Engine) PreTool(id, tool string, input json.RawMessage, cwd string) {
 			return
 		}
 		st.tree = tree
+		// Batch languages read the disk, so their baseline must be taken now,
+		// before the tool changes anything. Usually it is already current.
+		e.refreshBatch(tree)
 	} else if tool == ToolApplyPatch {
 		st.files = map[string]*string{}
 		for _, p := range patch.Paths(patch.Parse(patch.CommandText(input))) {
@@ -243,11 +255,11 @@ func (e *Engine) PostTool(ctx context.Context, id, tool string, input json.RawMe
 	if !e.relevant(tool, input) {
 		return &Result{}, nil
 	}
-	changes, err := e.collectChanges(id, tool, input, cwd)
+	changes, trees, err := e.collectChanges(id, tool, input, cwd)
 	if err != nil {
 		return nil, err
 	}
-	return e.check(ctx, changes)
+	return e.check(ctx, changes, trees)
 }
 
 // CheckSince reports diagnostics introduced since a git revision (the
@@ -278,10 +290,10 @@ func (e *Engine) CheckSince(ctx context.Context, rev string, all bool) (*Result,
 			changes[i].old = nil
 		}
 	}
-	return e.check(ctx, changes)
+	return e.check(ctx, changes, checkTrees{base: base, cur: cur, since: true, all: all})
 }
 
-func (e *Engine) collectChanges(id, tool string, input json.RawMessage, cwd string) ([]fileChange, error) {
+func (e *Engine) collectChanges(id, tool string, input json.RawMessage, cwd string) ([]fileChange, checkTrees, error) {
 	e.mu.Lock()
 	st, hasPre := e.pre[id]
 	delete(e.pre, id)
@@ -290,7 +302,7 @@ func (e *Engine) collectChanges(id, tool string, input json.RawMessage, cwd stri
 
 	if e.repo == nil {
 		if !hasPre {
-			return nil, nil
+			return nil, checkTrees{}, nil
 		}
 		var out []fileChange
 		for p, old := range st.files {
@@ -302,12 +314,12 @@ func (e *Engine) collectChanges(id, tool string, input json.RawMessage, cwd stri
 				out = append(out, fileChange{path: p, lang: l, old: old, new: cur})
 			}
 		}
-		return out, nil
+		return out, checkTrees{}, nil
 	}
 
 	cur, err := e.repo.Snapshot()
 	if err != nil {
-		return nil, err
+		return nil, checkTrees{}, err
 	}
 	base := st.tree
 	if !hasPre || base == "" {
@@ -321,7 +333,8 @@ func (e *Engine) collectChanges(id, tool string, input json.RawMessage, cwd stri
 	e.mu.Lock()
 	e.lastTree = cur
 	e.mu.Unlock()
-	return e.treeChanges(base, cur)
+	changes, err := e.treeChanges(base, cur)
+	return changes, checkTrees{base: base, cur: cur}, err
 }
 
 func (e *Engine) treeChanges(base, cur string) ([]fileChange, error) {
@@ -361,7 +374,7 @@ func (e *Engine) treeChanges(base, cur string) ([]fileChange, error) {
 	return out, nil
 }
 
-func (e *Engine) check(ctx context.Context, changes []fileChange) (*Result, error) {
+func (e *Engine) check(ctx context.Context, changes []fileChange, trees checkTrees) (*Result, error) {
 	res := &Result{Edited: map[string]bool{}, Texts: map[string]string{}}
 	var filtered []fileChange
 	for _, c := range changes {
@@ -402,7 +415,17 @@ func (e *Engine) check(ctx context.Context, changes []fileChange) (*Result, erro
 	for _, k := range keys {
 		group := groups[k]
 		_, root, _ := strings.Cut(k, "\x00")
-		newDiags, checked, notice, err := e.checkGroup(ctx, group[0].lang, root, group)
+		var (
+			newDiags []delta.Diag
+			checked  int
+			notice   string
+			err      error
+		)
+		if group[0].lang.Batch {
+			newDiags, checked, notice, err = e.checkBatch(ctx, group[0].lang, root, group, trees)
+		} else {
+			newDiags, checked, notice, err = e.checkGroup(ctx, group[0].lang, root, group)
+		}
 		if notice != "" {
 			res.Notices = append(res.Notices, notice)
 		}
@@ -676,6 +699,9 @@ func (e *Engine) Status() Status {
 		case entry.err != nil:
 			st.Servers = append(st.Servers, fmt.Sprintf("%s: error: %v", entry.lang.ID, entry.err))
 		}
+	}
+	for root, b := range e.batch {
+		st.Servers = append(st.Servers, fmt.Sprintf("rust: cargo check (%s), baseline for tree %.8s", root, b.tree))
 	}
 	sort.Strings(st.Servers)
 	return st

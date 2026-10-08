@@ -36,6 +36,8 @@ var defaultExcludes = []string{
 	":(exclude,glob)**/venv/**",
 	":(exclude,glob)**/site-packages/**",
 	":(exclude,glob)**/__pycache__/**",
+	// Build output of agent-squiggles' own cargo checks (generated sources).
+	":(exclude,glob)**/target/agent-squiggles/**",
 }
 
 // Change is one file that differs between two snapshots.

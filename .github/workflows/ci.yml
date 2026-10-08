@@ -41,6 +41,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: Check that cargo is available for the Rust tests
+        run: cargo --version
       - name: Install language servers with agent-squiggles itself
         run: go run ./cmd/agent-squiggles servers install go typescript python
       - name: Install TypeScript 6 for the typescript-language-server path

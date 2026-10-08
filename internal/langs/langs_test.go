@@ -1,6 +1,7 @@
 package langs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,5 +105,47 @@ func TestForPathAndProjectRoot(t *testing.T) {
 	}
 	if got := Python.ProjectRoot(filepath.Join(ws, "tools", "x.py"), ws); got != ws {
 		t.Fatalf("fallback to workspace: got %s", got)
+	}
+}
+
+func TestRustDetectionAndRoot(t *testing.T) {
+	if ForPath("src/main.rs") != Rust || ForPath("crates/core/Cargo.toml") != Rust || ForPath("Cargo.lock") != nil {
+		t.Fatal("ForPath mismatch for Rust files")
+	}
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n", 0o644)
+	touch(t, filepath.Join(ws, "crates", "core", "Cargo.toml"), "[package]\nname = \"core\"\n", 0o644)
+	if got := Rust.ProjectRoot(filepath.Join(ws, "crates", "core", "src", "lib.rs"), ws); got != ws {
+		t.Fatalf("workspace root should win: got %s", got)
+	}
+	solo := t.TempDir()
+	touch(t, filepath.Join(solo, "tool", "Cargo.toml"), "[package]\nname = \"tool\"\n", 0o644)
+	if got := Rust.ProjectRoot(filepath.Join(solo, "tool", "src", "main.rs"), solo); got != filepath.Join(solo, "tool") {
+		t.Fatalf("nearest package without a workspace: got %s", got)
+	}
+	found := false
+	for _, p := range Patterns([]*Language{Rust}) {
+		found = found || p == "*/Cargo.toml"
+	}
+	if !found {
+		t.Fatal("Patterns should include nested Cargo.toml files")
+	}
+}
+
+func TestRustNeedsTrust(t *testing.T) {
+	isolate(t, "cargo")
+	_, err := Resolve(Rust, t.TempDir(), config.Language{}, false)
+	var ue *UntrustedError
+	if !errors.As(err, &ue) {
+		t.Fatalf("untrusted Rust project: got %v, want UntrustedError", err)
+	}
+	s, err := Resolve(Rust, t.TempDir(), config.Language{}, true)
+	if err != nil || !s.Batch || filepath.Base(s.Command[0]) != "cargo" {
+		t.Fatalf("trusted Rust project: got %+v, %v", s, err)
+	}
+	isolate(t)
+	_, err = Resolve(Rust, t.TempDir(), config.Language{}, true)
+	if nie, ok := IsNotInstalled(err); !ok || nie.Installable {
+		t.Fatalf("without cargo: got %v, want a non-installable NotInstalledError", err)
 	}
 }
