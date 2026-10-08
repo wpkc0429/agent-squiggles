@@ -39,7 +39,7 @@ agent-squiggles: your last edit introduced 1 new error (pre-existing problems ar
 main.go:10:33: error: not enough arguments in call to greet.Hello; have (string); want (string, bool) [compiler WrongArgCount] (in a file you did not edit)
     fmt.Println(greet.Hello("world"))
 
-These errors come from the language server and were caused by that edit, including the ones in files you did not edit. The code will not compile or type-check until they are fixed: fix them before you finish, or tell the user why they should remain.
+These errors were reported by the compiler or language server and were caused by that edit, including the ones in files you did not edit. The code will not compile or type-check until they are fixed: fix them before you finish, or tell the user why they should remain.
 ```
 
 In our end-to-end test with Codex CLI, the agent replied *"The editor reports
@@ -64,9 +64,9 @@ it. It never ran the compiler and never opened `main.go` on its own.
 - **Fast.** A background daemon keeps language servers warm per workspace.
   The pre-edit snapshot takes about 6 ms, and most checks finish in well
   under a second (see [Performance](#performance)).
-- **Zero config.** It detects Go, TypeScript/JavaScript and Python. Missing
-  language servers are installed into agent-squiggles' own directory, never
-  globally.
+- **Zero config.** It detects Go, TypeScript/JavaScript, Python and Rust.
+  Missing language servers are installed into agent-squiggles' own
+  directory, never globally.
 - **It does not get in the way.** The report is added as context for the
   model. The tool call still succeeds, so the agent never mistakes a
   successful edit for a failed one. If you prefer a hard stop, there is a
@@ -110,9 +110,12 @@ agent-squiggles doctor
 | Go | `gopls` | Uses gopls's workspace diagnostics, so breakage in any package of the module is caught. |
 | TypeScript / JavaScript | TypeScript 7 native (`tsc --lsp`), or `typescript-language-server` | Projects pinned to TypeScript ≤ 6 are checked with their own `tsserver`. Otherwise the native TypeScript 7 server is used. |
 | Python | `pyright` or `basedpyright` | Uses your project's `.venv` / `venv` if present and respects your pyright config. |
+| Rust | `cargo check` (rustc) | Reports rustc's own errors across every crate in the Cargo workspace, and catches broken `Cargo.toml` files. Builds into `target/agent-squiggles`, so it does not wait on the build-directory lock your own `cargo` commands hold. Only runs in projects Codex trusts (see [Security model](#security-model)). |
 
 Servers are found on `PATH`, in the project (`node_modules`, `.venv`), or in
-`~/.local/share/agent-squiggles/servers`. You can install them explicitly:
+`~/.local/share/agent-squiggles/servers`. Rust uses the `cargo` from your
+`PATH` or `~/.cargo/bin` (install it with [rustup](https://rustup.rs)). You
+can install the others explicitly:
 
 ```sh
 agent-squiggles servers install go typescript python
@@ -140,6 +143,11 @@ agent-squiggles servers install go typescript python
   synchronously (`gopls.diagnose_files`). TypeScript 7 uses pull diagnostics.
   Other servers are considered done when every checked file has published
   and the stream has gone quiet.
+- **Rust** is checked with `cargo check` instead of a language server.
+  cargo reads files from disk, so it cannot be shown the old text; the
+  previous run's results serve as the baseline instead. `PreToolUse` refreshes
+  them only when the workspace changed since the last run, so one edit after
+  another costs one `cargo check` each.
 - **Matching** keys each diagnostic by severity, source, code and message.
   Old line numbers are mapped onto the new text with an LCS line diff, so
   errors that only moved stay matched.
@@ -193,7 +201,8 @@ agent-squiggles follows Codex's own project trust decision
 - **Untrusted projects** only get language servers from your `PATH` or the
   agent-squiggles directory. The project's config file is ignored, so a
   repository cannot choose which commands the hook runs or pass settings
-  such as gopls `buildFlags`.
+  such as gopls `buildFlags`. Rust is not checked at all, because
+  `cargo check` compiles and runs build scripts and procedural macros.
 
 `agent-squiggles doctor` shows whether the current project is trusted. The
 `check` command treats the repository you run it in as trusted, just as
@@ -221,10 +230,13 @@ measure the full check, from the snapshot diff to the report:
 | gopls | 100–600 ms |
 | typescript-language-server (TypeScript ≤ 6) | 0.6–1.6 s |
 | pyright | 0.6–2 s |
+| cargo check (small workspace, incremental) | 30–50 ms |
 
 The first check in a session also pays for server startup. The
 `SessionStart` hook starts servers in the background so the first edit does
-not wait for it.
+not wait for it. For Rust, the first `cargo check` in a workspace also
+compiles its dependencies once, which can take minutes on large projects;
+`cargo check` time grows with the size of the crate being rebuilt.
 
 ## Commands
 
@@ -245,6 +257,10 @@ not wait for it.
 - TypeScript and Python cross-file checks follow relative imports and
   `tsconfig` `paths` aliases, up to `maxDependents` files. Bare package
   imports inside monorepos are not followed yet.
+- Rust: when a crate already fails to compile, cargo does not check the
+  crates that depend on it, so breakage there shows up only once the first
+  crate compiles again. `check --base` cannot compare Rust against a past
+  revision; use `check --all` to list its errors in the changed files.
 - Snapshots write git objects that nothing references. `git gc` removes them
   on its normal schedule.
 - Codex CLI is the only supported agent today. The engine is agent-agnostic
@@ -262,7 +278,7 @@ not wait for it.
 
 ## Roadmap
 
-- Rust (`rust-analyzer`), PHP and Dart
+- PHP and Dart
 - Adapters for other agents with hook APIs
 - A GitHub Action wrapping `agent-squiggles check`
 - Windows support

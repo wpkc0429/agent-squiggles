@@ -24,7 +24,7 @@ agent-squiggles: your last edit introduced 1 new error (pre-existing problems ar
 main.go:10:33: error: not enough arguments in call to greet.Hello; have (string); want (string, bool) [compiler WrongArgCount] (in a file you did not edit)
     fmt.Println(greet.Hello("world"))
 
-These errors come from the language server and were caused by that edit, including the ones in files you did not edit. The code will not compile or type-check until they are fixed: fix them before you finish, or tell the user why they should remain.
+These errors were reported by the compiler or language server and were caused by that edit, including the ones in files you did not edit. The code will not compile or type-check until they are fixed: fix them before you finish, or tell the user why they should remain.
 ```
 
 在我們用 Codex CLI 做的端到端測試裡，agent 回了「The editor reports one expected caller error in `main.go`, so I'm updating that call」，接著就把它修好了。整個過程它沒有跑編譯器，也沒有主動打開 `main.go`。
@@ -35,7 +35,7 @@ These errors come from the language server and were caused by that edit, includi
 - **跨檔錯誤。** 改了簽名導致其他檔案的呼叫端壞掉，一樣抓得到。Go 靠 gopls 的全工作區診斷；TypeScript 與 Python 會找出 import 被改檔案的其他檔案一起檢查。
 - **Shell 編輯也算。** `sed -i`、程式碼產生器、`mv`、`rm`，agent 透過 `Bash` 做的改動都會被偵測。做法是在每次工具呼叫的前後，把 git 快照寫進一份私有 index，完全不動你自己的 index、分支和 stash。唯讀指令（`ls`、`rg`、`git diff` 等）會直接略過。
 - **快。** 每個工作區有一個背景 daemon 讓語言伺服器保持啟動。編輯前的快照約 6 毫秒，多數檢查在一秒內完成。
-- **免設定。** 自動偵測 Go、TypeScript/JavaScript、Python。缺少的語言伺服器會裝進 agent-squiggles 自己的目錄，不會污染全域環境。
+- **免設定。** 自動偵測 Go、TypeScript/JavaScript、Python、Rust。缺少的語言伺服器會裝進 agent-squiggles 自己的目錄，不會污染全域環境。
 - **不擋路。** 報告是以附加脈絡的方式交給模型，工具呼叫本身照樣成功，agent 不會誤以為編輯失敗。想要硬性攔截的話可以改用 `block` 模式。
 - **單一靜態執行檔**，用 Go 撰寫，沒有執行期相依。
 
@@ -67,13 +67,14 @@ agent-squiggles doctor
 | Go | `gopls` | 使用 gopls 的全工作區診斷，模組內任何套件壞掉都抓得到。 |
 | TypeScript / JavaScript | TypeScript 7 原生（`tsc --lsp`），或 `typescript-language-server` | 專案固定在 TypeScript 6 以下時，用專案自己的 `tsserver`；否則用 TypeScript 7 原生伺服器。 |
 | Python | `pyright` 或 `basedpyright` | 會使用專案的 `.venv` / `venv`，並遵循你的 pyright 設定。 |
+| Rust | `cargo check`（rustc） | 回報 rustc 本身的錯誤，涵蓋整個 Cargo workspace 的所有 crate，`Cargo.toml` 寫壞也抓得到。建置輸出放在 `target/agent-squiggles`，不會卡在你自己 `cargo` 指令持有的建置目錄鎖。只在 Codex 信任的專案中執行。 |
 
 ## 安全模型
 
 Codex 的 hook 在 Codex 沙箱**之外**、以你的使用者權限執行，所以 agent-squiggles 會跟隨 Codex 自己的專案信任判斷（`~/.codex/config.toml` 中的 `trust_level = "trusted"`）：
 
 - **已信任的專案**：可以使用專案內的語言伺服器（`node_modules/typescript`、`.venv`）和 `.agent-squiggles.json`。
-- **未信任的專案**：只使用 `PATH` 上或 agent-squiggles 目錄裡的語言伺服器，並忽略專案設定檔。repo 無法決定 hook 要執行什麼指令，也無法傳入 gopls `buildFlags` 這類設定。
+- **未信任的專案**：只使用 `PATH` 上或 agent-squiggles 目錄裡的語言伺服器，並忽略專案設定檔。repo 無法決定 hook 要執行什麼指令，也無法傳入 gopls `buildFlags` 這類設定。Rust 完全不檢查，因為 `cargo check` 會編譯並執行專案的 build script 與 procedural macro。
 
 所有處理都在本機完成，不會傳送任何資料；只有安裝缺少的語言伺服器時才會用到網路。
 
@@ -96,6 +97,8 @@ agent-squiggles check --base origin/main
 - 目前只支援 Linux 和 macOS。
 - 要偵測 shell 指令造成的編輯，需要 git repo；沒有 git 時只會檢查 `apply_patch` 的編輯。
 - TypeScript 與 Python 的跨檔檢查會追蹤相對 import 和 `tsconfig` 的 `paths` 別名，上限為 `maxDependents` 個檔案。
+- Rust：如果某個 crate 原本就編譯失敗，cargo 不會檢查依賴它的 crate，這些地方的錯誤要等那個 crate 能編譯後才會出現。`check --base` 無法拿 Rust 與過去的版本比較，請改用 `check --all` 列出變更檔案裡的錯誤。
+- Rust 第一次執行 `cargo check` 時會先編譯所有依賴，大型專案可能要幾分鐘。
 - 目前只支援 Codex CLI。核心引擎本身不綁定特定 agent，之後會加入其他 agent 的介接。
 
 ## 授權

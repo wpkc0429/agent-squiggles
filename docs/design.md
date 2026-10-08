@@ -26,6 +26,7 @@ internal/engine          change detection and the before/after comparison
 internal/snapshot        git tree snapshots through a private index
 internal/lsp             minimal LSP client (JSON-RPC, documents, diagnostics)
 internal/langs           language definitions, server discovery and installation
+internal/cargo           runs and parses `cargo check` for Rust
 internal/deps            reverse-import scan for TypeScript and Python
 internal/delta           line mapping and diagnostic matching
 internal/report          the text the agent reads
@@ -89,6 +90,46 @@ side effect is unreferenced objects in `.git/objects`, which `git gc` prunes.
 Outside a git repository, the engine falls back to parsing `apply_patch` and
 reading the touched files before and after. Shell edits are not detected in
 that mode.
+
+## Rust: a batch checker with cached baselines
+
+Rust does not go through a language server. rust-analyzer's own diagnostics
+only cover open files and miss much of what rustc reports, and its
+cargo-based diagnostics read files from disk, so they cannot be shown an old
+version of a file. agent-squiggles runs `cargo check --workspace
+--all-targets --message-format=json` itself (`internal/cargo`) and gets
+exactly rustc's errors for every crate in the workspace.
+
+Because cargo reads the disk, phase 1 (showing the server the old text) is
+impossible. Instead the engine keeps each run's results together with the
+snapshot tree they were computed for (`internal/engine/batch.go`):
+
+- `SessionStart` runs a check for the current tree.
+- `PreToolUse` checks whether the cached results belong to the pre-edit tree
+  `T0`. If not (the user edited files between turns), it runs a check before
+  the tool changes anything. Usually they already do, so this costs nothing.
+- `PostToolUse` runs one check on `T1`, compares it with the cached `T0`
+  results using the same line mapping and matching as the other languages,
+  and caches the `T1` results for the next edit.
+- A run is discarded if the tree changed while cargo was running, and an
+  edit without a valid baseline is not reported; it records the baseline for
+  the next one.
+
+Details:
+
+- Output goes to `target/agent-squiggles` so the check does not block on the
+  build-directory lock held by the agent's own `cargo build` or `cargo test`.
+  That directory is excluded from snapshots, since build scripts generate
+  `.rs` files there.
+- `Cargo.toml` belongs to the Rust language: editing it triggers a check, and
+  manifest errors (reported only on stderr, with a `--> file:line:col`
+  location) become diagnostics.
+- The same error appears once per target (`lib`, `lib test`, ...) and is
+  deduplicated. Errors in registry dependencies are dropped.
+- `cargo check` compiles and runs build scripts and procedural macros, so it
+  only runs in projects Codex trusts.
+- When a crate fails to compile, cargo does not check the crates that depend
+  on it. That is a limit of cargo, documented in the README.
 
 ## Knowing when a server is done
 
@@ -167,7 +208,9 @@ projects it:
 - ignores `.agent-squiggles.json`, which could set server commands and
   settings,
 - skips project-local servers (`node_modules/typescript`, `.venv/bin/*`)
-  and does not point pyright at the project's interpreter.
+  and does not point pyright at the project's interpreter,
+- does not check Rust at all, because `cargo check` runs build scripts and
+  procedural macros.
 
 The daemon re-reads trust whenever Codex's config changes and restarts its
 servers if the answer changed.

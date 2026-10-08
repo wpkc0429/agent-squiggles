@@ -6,6 +6,22 @@ uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
+### Added
+
+- Rust support through `cargo check`. It reports rustc's own errors across
+  every crate in the Cargo workspace, including broken `Cargo.toml` files.
+  The previous run's results serve as the baseline, so consecutive edits
+  cost one `cargo check` each. Builds go to `target/agent-squiggles`. Rust
+  is only checked in projects Codex trusts, because `cargo check` runs build
+  scripts and procedural macros.
+
+### Changed
+
+- The report now says its errors come from "the compiler or language
+  server".
+
 ## [0.1.0] - 2026-09-30
 
 First release.
@@ -29,5 +45,6 @@ First release.
 - Security: project-local language servers and project config are only used
   for projects Codex trusts, and the daemon socket directory must be private.
 
-[Unreleased]: https://github.com/wpkc0429/agent-squiggles/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wpkc0429/agent-squiggles/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wpkc0429/agent-squiggles/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/wpkc0429/agent-squiggles/releases/tag/v0.1.0

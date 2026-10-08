@@ -18,7 +18,7 @@ go build ./...
 go vet ./...
 gofmt -l .                          # must print nothing
 go test ./...                       # unit tests, no network, no language servers
-go test -tags integration ./...     # needs gopls, TypeScript and pyright (see below)
+go test -tags integration ./...     # needs gopls, TypeScript, pyright and cargo (see below)
 ```
 
 Install the language servers used by the integration tests with:
@@ -26,6 +26,9 @@ Install the language servers used by the integration tests with:
 ```sh
 go run ./cmd/agent-squiggles servers install go typescript python
 ```
+
+The Rust tests need `cargo` on `PATH` (install it with rustup); they are
+skipped without it.
 
 ## Conventions
 
