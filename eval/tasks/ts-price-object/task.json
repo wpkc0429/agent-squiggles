@@ -1,0 +1,12 @@
+{
+  "language": "typescript",
+  "prompt": "Change formatPrice in src/money.ts to take a single options object { cents: number; currency?: string } instead of positional parameters. Update the rest of the code so the project type-checks.",
+  "check": "node_modules/.bin/tsc -p .",
+  "setup": {
+    "node_modules": "typescript"
+  },
+  "traps": [
+    "src/report.ts calls it through a renamed re-export (fmt)",
+    "src/receipts.ts uses a namespace import"
+  ]
+}

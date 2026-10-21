@@ -1,0 +1,9 @@
+{
+  "language": "rust",
+  "prompt": "Change config::parse in src/config.rs to return Result<Config, ParseError> instead of panicking on invalid input (add a ParseError type). Update the rest of the code so everything builds and the tests pass.",
+  "check": "cargo test --quiet",
+  "traps": [
+    "src/cli.rs imports it as load",
+    "the binary and an integration test call it too"
+  ]
+}

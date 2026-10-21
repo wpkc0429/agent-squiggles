@@ -1,0 +1,4 @@
+{
+  "rs-parse-result-baseline-1": "the eval toolchain lacked rustfmt, so Codex's `cargo fmt --check && cargo test` failed for a reason unrelated to its edit; rustfmt was installed before rep 2",
+  "rs-parse-result-squiggles-1": "the eval toolchain lacked rustfmt, so Codex's `cargo fmt --check && cargo test` failed for a reason unrelated to its edit; rustfmt was installed before rep 2"
+}

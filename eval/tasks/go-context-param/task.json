@@ -1,0 +1,9 @@
+{
+  "language": "go",
+  "prompt": "Make Store.Get in store/store.go take a context.Context as its first parameter and return ctx.Err() if the context is already done. Update the rest of the code so everything builds and the tests pass.",
+  "check": "go build ./... && go vet ./... && go test ./...",
+  "traps": [
+    "api.Lookup is an interface that *store.Store must keep satisfying",
+    "callers in pricing, api, cmd/shop and three test files"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "language": "python",
+  "prompt": "Make charge() in billing/payments.py require a keyword-only currency: str argument and store it on Receipt. Update the rest of the code so all the tests pass.",
+  "check": "python3 -m unittest discover -s tests -t .",
+  "traps": [
+    "shop/checkout.py imports it as pay",
+    "shop/refunds.py calls it through the module (payments.charge)",
+    "the tests call it too"
+  ]
+}
