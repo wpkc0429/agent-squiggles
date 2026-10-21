@@ -60,7 +60,7 @@ func Defaults() Config {
 		Bash:           &t,
 		AutoInstall:    &t,
 		Mode:           "context",
-		TimeoutSeconds: 45,
+		TimeoutSeconds: 20,
 		Languages:      map[string]Language{},
 	}
 }

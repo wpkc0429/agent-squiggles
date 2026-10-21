@@ -38,6 +38,11 @@ const (
 	preTTL = 15 * time.Minute
 )
 
+// warmWait bounds how long a check waits for a language server's initial
+// workspace load before skipping. An agent should never sit behind a slow
+// load. It is a variable so tests can shorten it.
+var warmWait = 10 * time.Second
+
 // Tool names as they appear in Codex hook payloads.
 const (
 	ToolApplyPatch = "apply_patch"
@@ -62,6 +67,9 @@ type Result struct {
 type Engine struct {
 	Root string
 
+	// cfg and trusted are written with both optsMu and checkMu held, so
+	// holding either one is enough to read them.
+	optsMu  sync.RWMutex
 	cfg     config.Config
 	trusted bool
 	repo    *snapshot.Repo
@@ -73,10 +81,14 @@ type Engine struct {
 	pre      map[string]preState
 	notices  []string
 
-	checkMu       sync.Mutex // serializes language-server work and batch checks
-	servers       map[string]*serverEntry
-	installing    map[string]bool
-	warned        map[string]bool
+	checkMu    sync.Mutex // serializes language-server work
+	servers    map[string]*serverEntry
+	installing map[string]bool
+	warned     map[string]bool
+
+	// batchMu guards batch state. It is separate from checkMu so PreToolUse
+	// never waits for language-server work.
+	batchMu       sync.Mutex
 	batch         map[string]*batchState // batch project root -> last results
 	batchRootList map[string][]string    // language ID -> batch project roots
 }
@@ -96,6 +108,9 @@ type serverEntry struct {
 	// primed is set once the server has settled at least once, so its
 	// diagnostics can serve as a baseline without another round trip.
 	primed bool
+	// warming is non-nil while the initial workspace load runs; it is
+	// closed when the load ends.
+	warming chan struct{}
 }
 
 type fileChange struct {
@@ -143,8 +158,17 @@ func (e *Engine) Config() config.Config { return e.cfg }
 // SetConfig replaces the configuration (after the config file changed).
 func (e *Engine) SetConfig(cfg config.Config) {
 	e.checkMu.Lock()
+	e.optsMu.Lock()
 	e.cfg = cfg
+	e.optsMu.Unlock()
 	e.checkMu.Unlock()
+}
+
+// opts returns the configuration and trust without waiting for checks.
+func (e *Engine) opts() (config.Config, bool) {
+	e.optsMu.RLock()
+	defer e.optsMu.RUnlock()
+	return e.cfg, e.trusted
 }
 
 // SetTrusted records whether Codex trusts the project, which decides
@@ -152,8 +176,10 @@ func (e *Engine) SetConfig(cfg config.Config) {
 // restarted when it changes.
 func (e *Engine) SetTrusted(trusted bool) {
 	e.checkMu.Lock()
+	e.optsMu.Lock()
 	changed := e.trusted != trusted
 	e.trusted = trusted
+	e.optsMu.Unlock()
 	e.checkMu.Unlock()
 	if changed {
 		e.Close()
@@ -190,18 +216,28 @@ func (e *Engine) SessionStart(ctx context.Context) {
 
 func (e *Engine) warm(ctx context.Context, l *langs.Language) {
 	e.checkMu.Lock()
-	defer e.checkMu.Unlock()
 	entry, err := e.server(ctx, l, e.Root)
-	if err != nil {
+	if err != nil || l != langs.Go || entry.warming != nil || entry.primed {
+		e.checkMu.Unlock()
 		return
 	}
-	if l == langs.Go {
-		// Trigger gopls' initial workspace load and diagnosis now rather
-		// than during the first edit.
-		if files := e.listFiles(l); len(files) > 0 && entry.srv.Settle(ctx, files[:1], 0) {
-			entry.primed = true
-		}
-	}
+	// Trigger gopls' initial workspace load and diagnosis now rather than
+	// during the first edit. On a large module or a cold build cache this
+	// takes a long time, so it runs without checkMu: checks for other
+	// languages proceed, and checks for this one wait at most warmWait.
+	files := e.listFiles(l)
+	done := make(chan struct{})
+	entry.warming = done
+	srv := entry.srv
+	e.checkMu.Unlock()
+
+	ok := len(files) > 0 && srv.Settle(ctx, files[:1], 0)
+
+	e.checkMu.Lock()
+	entry.primed = entry.primed || ok
+	entry.warming = nil
+	e.checkMu.Unlock()
+	close(done)
 }
 
 // PreTool records the state of the workspace before a tool runs.
@@ -446,6 +482,20 @@ func (e *Engine) checkGroup(ctx context.Context, l *langs.Language, root string,
 	entry, err := e.server(ctx, l, root)
 	if err != nil {
 		return nil, 0, e.serverNotice(l, err), err
+	}
+	if w := entry.warming; w != nil {
+		// The caller holds checkMu; release it while waiting so the
+		// warm-up can record its result.
+		e.checkMu.Unlock()
+		select {
+		case <-w:
+		case <-time.After(warmWait):
+		case <-ctx.Done():
+		}
+		e.checkMu.Lock()
+		if entry.warming != nil || !entry.srv.Alive() {
+			return nil, 0, e.once("loading:"+l.ID+"\x00"+root, "agent-squiggles: "+entry.srv.Name()+" is still loading the workspace; checks start once it is ready"), nil
+		}
 	}
 	srv := entry.srv
 	changed := map[string]bool{}
@@ -700,9 +750,11 @@ func (e *Engine) Status() Status {
 			st.Servers = append(st.Servers, fmt.Sprintf("%s: error: %v", entry.lang.ID, entry.err))
 		}
 	}
+	e.batchMu.Lock()
 	for root, b := range e.batch {
 		st.Servers = append(st.Servers, fmt.Sprintf("rust: cargo check (%s), baseline for tree %.8s", root, b.tree))
 	}
+	e.batchMu.Unlock()
 	sort.Strings(st.Servers)
 	return st
 }
