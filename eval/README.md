@@ -15,16 +15,23 @@ exact build, type-check or test command to run before finishing.
 
 `run.py` runs every task under two conditions with `codex exec`:
 
-- **baseline**: no hooks. Codex relies on the checker named in `AGENTS.md`.
-- **squiggles**: the agent-squiggles hooks are installed. Everything else is
-  identical: the same prompt, model, reasoning effort, `AGENTS.md`, and
-  `workspace-write` sandbox.
+- **baseline**: Codex relies on the checker named in `AGENTS.md`. By default
+  this is a *placebo* baseline: the same hooks are installed and Codex gets
+  the same flags, but the hooks are switched off (`AGENT_SQUIGGLES_DISABLE=1`),
+  so they never report anything. Batches up to 2026-10-22 used a baseline with
+  no hooks at all (`--no-placebo`).
+- **squiggles**: the agent-squiggles hooks are installed and active.
+  Everything else is identical: the same prompt, model, reasoning effort,
+  `AGENTS.md`, and `workspace-write` sandbox.
 
 For every run it records, from Codex's JSON event stream:
 
 - **checker runs**: build, type-check and test commands Codex ran,
 - **failed checker runs**: how many of those failed, i.e. edit → build → fix
-  loops,
+  loops, split into compile or type errors (what agent-squiggles reports),
+  formatting checks, and anything else,
+- **type error reached checker**: runs in which a compile or type error
+  survived until Codex ran the checker,
 - **first check passed**: whether the first such command already succeeded,
 - edits, tokens and wall-clock time,
 
@@ -63,6 +70,9 @@ Results go to `eval/results/<date>/`: `runs.jsonl` (one record per run),
 
 ## Caveats
 
+- Look at whether agent-squiggles actually reported anything (the line under
+  the tables, and `squiggles` in `runs.jsonl`). A difference between the
+  conditions in runs where it reported nothing cannot be its doing.
 - These are small, synthetic repositories, designed so that a missed caller
   is plausible. Real repositories are larger, which makes the checker slower
   and grep noisier, but also gives the model more context.

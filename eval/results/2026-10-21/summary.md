@@ -5,23 +5,23 @@ Model: gpt-5.6-luna (medium). agent-squiggles: unknown.
 
 ## Overall
 
-| Condition | Runs | Success | Checker runs | Failed checker runs | First check passed | Edits | Tokens in / out | Time |
-|---|---|---|---|---|---|---|---|---|
-| baseline | 7 | 7/7 | 1.6 | 0.4 | 4/7 | 1.4 | 116k / 2.5k | 43 s |
-| squiggles | 7 | 7/7 | 1.4 | 0.1 | 6/7 | 1.6 | 138k / 3.1k | 67 s |
+| Condition | Runs | Success | Type error reached checker | Checker runs | Failed checker runs (type / format / other) | First check passed | Edits | Tokens in / out | Time |
+|---|---|---|---|---|---|---|---|---|---|
+| baseline | 7 | 7/7 | 3/7 | 1.6 | 0.4 (0.4 / 0.0 / 0.0) | 4/7 | 1.4 | 116k / 2.5k | 43 s |
+| squiggles | 7 | 7/7 | 1/7 | 1.4 | 0.1 (0.1 / 0.0 / 0.0) | 6/7 | 1.6 | 138k / 3.1k | 67 s |
 
 ## By task
 
-| Condition | Runs | Success | Checker runs | Failed checker runs | First check passed | Edits | Tokens in / out | Time |
-|---|---|---|---|---|---|---|---|---|
-| go-context-param / baseline | 2 | 2/2 | 1.5 | 0.0 | 2/2 | 1.0 | 126k / 2.7k | 53 s |
-| go-context-param / squiggles | 2 | 2/2 | 1.5 | 0.0 | 2/2 | 1.5 | 233k / 4.6k | 141 s |
-| py-charge-currency / baseline | 2 | 2/2 | 2.0 | 1.0 | 0/2 | 2.0 | 123k / 2.7k | 48 s |
-| py-charge-currency / squiggles | 2 | 2/2 | 1.0 | 0.0 | 2/2 | 1.0 | 107k / 2.8k | 43 s |
-| rs-parse-result / baseline | 1 | 1/1 | 1.0 | 0.0 | 1/1 | 1.0 | 105k / 3.0k | 40 s |
-| rs-parse-result / squiggles | 1 | 1/1 | 2.0 | 0.0 | 1/1 | 3.0 | 111k / 3.8k | 53 s |
-| ts-price-object / baseline | 2 | 2/2 | 1.5 | 0.5 | 1/2 | 1.5 | 102k / 1.7k | 31 s |
-| ts-price-object / squiggles | 2 | 2/2 | 1.5 | 0.5 | 1/2 | 1.5 | 87k / 1.6k | 25 s |
+| Condition | Runs | Success | Type error reached checker | Checker runs | Failed checker runs (type / format / other) | First check passed | Edits | Tokens in / out | Time |
+|---|---|---|---|---|---|---|---|---|---|
+| go-context-param / baseline | 2 | 2/2 | 0/2 | 1.5 | 0.0 (0.0 / 0.0 / 0.0) | 2/2 | 1.0 | 126k / 2.7k | 53 s |
+| go-context-param / squiggles | 2 | 2/2 | 0/2 | 1.5 | 0.0 (0.0 / 0.0 / 0.0) | 2/2 | 1.5 | 233k / 4.6k | 141 s |
+| py-charge-currency / baseline | 2 | 2/2 | 2/2 | 2.0 | 1.0 (1.0 / 0.0 / 0.0) | 0/2 | 2.0 | 123k / 2.7k | 48 s |
+| py-charge-currency / squiggles | 2 | 2/2 | 0/2 | 1.0 | 0.0 (0.0 / 0.0 / 0.0) | 2/2 | 1.0 | 107k / 2.8k | 43 s |
+| rs-parse-result / baseline | 1 | 1/1 | 0/1 | 1.0 | 0.0 (0.0 / 0.0 / 0.0) | 1/1 | 1.0 | 105k / 3.0k | 40 s |
+| rs-parse-result / squiggles | 1 | 1/1 | 0/1 | 2.0 | 0.0 (0.0 / 0.0 / 0.0) | 1/1 | 3.0 | 111k / 3.8k | 53 s |
+| ts-price-object / baseline | 2 | 2/2 | 1/2 | 1.5 | 0.5 (0.5 / 0.0 / 0.0) | 1/2 | 1.5 | 102k / 1.7k | 31 s |
+| ts-price-object / squiggles | 2 | 2/2 | 1/2 | 1.5 | 0.5 (0.5 / 0.0 / 0.0) | 1/2 | 1.5 | 87k / 1.6k | 25 s |
 
 agent-squiggles ran 28 checks in these runs and reported new errors 1 times (2 errors in total).
 
@@ -30,4 +30,4 @@ Excluded runs:
 - rs-parse-result-baseline-1: the eval toolchain lacked rustfmt, so Codex's `cargo fmt --check && cargo test` failed for a reason unrelated to its edit; rustfmt was installed before rep 2
 - rs-parse-result-squiggles-1: the eval toolchain lacked rustfmt, so Codex's `cargo fmt --check && cargo test` failed for a reason unrelated to its edit; rustfmt was installed before rep 2
 
-Columns: *Checker runs* counts the build, type-check and test commands Codex ran (see `CHECKER_RE` in run.py); *Failed checker runs* is how many of them failed, i.e. edit, build, fix loops; *First check passed* is how often the first such command already succeeded. *Success* re-runs the task's check after Codex finishes.
+Columns: *Type error reached checker* counts runs in which a build, type-check or test command failed on a compile or type error, the kind agent-squiggles reports; *Checker runs* counts those commands (see `CHECKER_RE` in run.py); *Failed checker runs* is how many failed, split by `failure_kind` into type errors, formatting checks and anything else; *First check passed* is how often the first such command already succeeded. *Success* re-runs the task's check after Codex finishes.

@@ -4,6 +4,9 @@ First batch: 4 tasks × 2 conditions × 2 repetitions with `gpt-5.6-luna`
 (medium), agent-squiggles v0.2.0 (the runs predate the `agent_squiggles`
 field in `runs.jsonl`). Two Rust runs are excluded because the eval's Rust
 toolchain lacked `rustfmt` (see `excluded.json`). Tables: [summary.md](summary.md).
+The failure-kind fields (`type_failures`, `format_failures`,
+`other_failures`) were added later by re-reading the saved event streams; see
+the [2026-10-22 notes](../2026-10-22-v0.2.1/NOTES.md).
 
 ## What the numbers say, and what they do not
 

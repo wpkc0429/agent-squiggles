@@ -40,6 +40,22 @@ CHECKER_RE = re.compile(
 )
 LIMIT_RE = re.compile(r"usage limit|rate limit|quota", re.I)
 
+# What a failed checker run failed on. Type errors are what agent-squiggles
+# can catch; formatting and test assertions are not.
+TYPE_ERROR_RE = re.compile(
+    r"error\[E\d+\]|error TS\d+|\.go:\d+:\d+: |TypeError: .*(argument|positional)"
+    r"|AttributeError: |NameError: |ImportError: |cannot find module", re.I)
+FMT_RE = re.compile(r"\b(cargo fmt|gofmt|rustfmt|prettier|black|ruff format)\b")
+
+
+def failure_kind(command, output):
+    """Classifies a failed checker run as "type", "format" or "other"."""
+    if TYPE_ERROR_RE.search(output):
+        return "type"
+    if FMT_RE.search(command):
+        return "format"
+    return "other"
+
 
 def log(msg):
     print("[eval %s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
@@ -135,9 +151,9 @@ def task_env(run_dir, extra_path):
     return env
 
 
-def run_codex(home, repo, prompt, squiggles, env, timeout):
+def run_codex(home, repo, prompt, hooks, env, timeout):
     cmd = ["codex", "exec", "--json", "-s", "workspace-write", "-C", repo]
-    if squiggles:
+    if hooks:
         # The throwaway CODEX_HOME cannot have its hooks reviewed interactively.
         cmd.insert(2, "--dangerously-bypass-hook-trust")
     cmd.append(prompt)
@@ -172,6 +188,7 @@ def parse_events(text):
 
 def metrics(events):
     m = {"commands": 0, "checker_runs": 0, "checker_failures": 0, "first_checker_passed": None,
+         "type_failures": 0, "format_failures": 0, "other_failures": 0,
          "edits": 0, "files_edited": 0, "agent_messages": 0,
          "input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0,
          "errors": []}
@@ -188,6 +205,8 @@ def metrics(events):
                     ok = item.get("exit_code") == 0
                     if not ok:
                         m["checker_failures"] += 1
+                        kind = failure_kind(item.get("command", ""), item.get("aggregated_output", ""))
+                        m[kind + "_failures"] += 1
                     if m["first_checker_passed"] is None:
                         m["first_checker_passed"] = ok
             elif kind == "file_change":
@@ -254,12 +273,18 @@ def run_one(task, cond, rep, args, bin_path, version):
     repo = prepare_repo(task, run_dir, os.path.expanduser(args.ts_modules))
     home = os.path.join(run_dir, "codex-home")
     squiggles = cond == "squiggles"
+    # With a placebo baseline, both conditions install the same hooks and pass
+    # the same flags; in the baseline the hooks are switched off through the
+    # environment, so the only difference left is agent-squiggles working.
+    hooks = squiggles or args.placebo
     env = task_env(run_dir, args.path_prepend)
+    if hooks and not squiggles:
+        env["AGENT_SQUIGGLES_DISABLE"] = "1"
     global _current_home
     _current_home = home
     try:
-        make_codex_home(home, repo, args, bin_path if squiggles else None)
-        code, out, err, secs = run_codex(home, repo, task["prompt"], squiggles, env, args.timeout)
+        make_codex_home(home, repo, args, bin_path if hooks else None)
+        code, out, err, secs = run_codex(home, repo, task["prompt"], hooks, env, args.timeout)
     finally:
         remove_auth(home)
         _current_home = None
@@ -273,6 +298,7 @@ def run_one(task, cond, rep, args, bin_path, version):
     rec = {
         "run": run_id, "task": task["id"], "language": task["language"], "condition": cond, "rep": rep,
         "model": args.model, "effort": args.effort, "agent_squiggles": version,
+        "baseline": "placebo" if args.placebo else "no-hooks",
         "codex_exit": code, "seconds": round(secs, 1),
         "success": ok, "check_tail": check_out if not ok else "",
     }
@@ -304,21 +330,26 @@ def summarize(out_dir):
 
     def row(label, rs):
         firsts = [r["first_checker_passed"] for r in rs if r["first_checker_passed"] is not None]
-        return "| %s | %d | %d/%d | %.1f | %.1f | %s | %.1f | %.0fk / %.1fk | %.0f s |" % (
+        return "| %s | %d | %d/%d | %d/%d | %.1f | %.1f (%.1f / %.1f / %.1f) | %s | %.1f | %.0fk / %.1fk | %.0f s |" % (
             label, len(rs), sum(r["success"] for r in rs), len(rs),
+            sum(1 for r in rs if r.get("type_failures", 0)), len(rs),
             mean([r["checker_runs"] for r in rs]), mean([r["checker_failures"] for r in rs]),
+            mean([r.get("type_failures", 0) for r in rs]), mean([r.get("format_failures", 0) for r in rs]),
+            mean([r.get("other_failures", 0) for r in rs]),
             ("%d/%d" % (sum(firsts), len(firsts))) if firsts else "–",
             mean([r["edits"] for r in rs]),
             mean([r["input_tokens"] for r in rs]) / 1000, mean([r["output_tokens"] for r in rs]) / 1000,
             mean([r["seconds"] for r in rs]))
 
-    header = ("| Condition | Runs | Success | Checker runs | Failed checker runs | First check passed "
-              "| Edits | Tokens in / out | Time |\n|---|---|---|---|---|---|---|---|---|")
+    header = ("| Condition | Runs | Success | Type error reached checker | Checker runs "
+              "| Failed checker runs (type / format / other) | First check passed "
+              "| Edits | Tokens in / out | Time |\n|---|---|---|---|---|---|---|---|---|---|")
     lines = ["# Results", "",
              "Generated by `eval/run.py` from `runs.jsonl` (%d valid runs of %d)." % (len(valid), len(runs)),
-             "Model: %s. agent-squiggles: %s." % (
+             "Model: %s. agent-squiggles: %s. Baseline: %s." % (
                  ", ".join(sorted({"%s (%s)" % (r["model"], r["effort"]) for r in runs})),
-                 ", ".join(sorted({r.get("agent_squiggles", "unknown") for r in runs}))), "",
+                 ", ".join(sorted({r.get("agent_squiggles", "unknown") for r in runs})),
+                 ", ".join(sorted({r.get("baseline", "no-hooks") for r in runs}))), "",
              "## Overall", "", header]
     for cond in CONDITIONS:
         rs = [r for r in valid if r["condition"] == cond]
@@ -342,9 +373,11 @@ def summarize(out_dir):
         lines += ["- %s: Codex exited with %s%s" % (r["run"], r["codex_exit"], ", usage limit" if r.get("limited") else "")
                   for r in invalid]
         lines += ["- %s: %s" % (run, reason) for run, reason in sorted(excluded.items())]
-    lines += ["", "Columns: *Checker runs* counts the build, type-check and test commands Codex ran "
-              "(see `CHECKER_RE` in run.py); *Failed checker runs* is how many of them failed, i.e. edit, "
-              "build, fix loops; *First check passed* is how often the first such command already "
+    lines += ["", "Columns: *Type error reached checker* counts runs in which a build, type-check or test "
+              "command failed on a compile or type error, the kind agent-squiggles reports; "
+              "*Checker runs* counts those commands (see `CHECKER_RE` in run.py); *Failed checker runs* "
+              "is how many failed, split by `failure_kind` into type errors, formatting checks and "
+              "anything else; *First check passed* is how often the first such command already "
               "succeeded. *Success* re-runs the task's check after Codex finishes.", ""]
     with open(os.path.join(out_dir, "summary.md"), "w") as f:
         f.write("\n".join(lines))
@@ -365,6 +398,8 @@ def main():
                     help="node_modules with TypeScript, linked into TypeScript tasks")
     ap.add_argument("--path-prepend", default="", help="extra PATH entries (for example a cargo bin dir)")
     ap.add_argument("--timeout", type=int, default=600, help="seconds per Codex run and per check")
+    ap.add_argument("--no-placebo", dest="placebo", action="store_false",
+                    help="run the baseline without any hooks instead of with switched-off hooks")
     ap.add_argument("--summarize", action="store_true", help="only rebuild summary.md from runs.jsonl")
     args = ap.parse_args()
 
