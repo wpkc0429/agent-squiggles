@@ -325,3 +325,21 @@ func TestRustUntrusted(t *testing.T) {
 		t.Fatal("cargo ran in an untrusted project")
 	}
 }
+
+// The eval task ts-price-object: the broken caller reaches the edited module
+// only through a renamed re-export in a barrel file.
+func TestTypeScriptReExportChain(t *testing.T) {
+	root := gitRepo(t, map[string]string{
+		"package.json":  "{}\n",
+		"tsconfig.json": `{"compilerOptions":{"strict":true,"module":"esnext","target":"es2022","moduleResolution":"bundler","noEmit":true}}`,
+		"src/money.ts":  "export function formatPrice(cents: number): string { return String(cents); }\n",
+		"src/index.ts":  "export { formatPrice as fmt } from \"./money\";\n",
+		"src/report.ts": "import { fmt } from \"./index\";\nexport const line = fmt(100);\n",
+	})
+	requireServer(t, langs.TypeScript, root)
+	h := newHarness(t, root)
+	res := h.edit(ToolApplyPatch, "*** Begin Patch", map[string]*string{
+		"src/money.ts": str("export function formatPrice(opts: { cents: number }): string { return String(opts.cents); }\n"),
+	})
+	expect(t, res.New, "report.ts: Argument of type 'number' is not assignable")
+}

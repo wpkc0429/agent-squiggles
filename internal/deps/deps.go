@@ -67,39 +67,50 @@ func (f *Finder) Dependents(kind Kind, candidates, changed []string, limit int) 
 	for _, c := range changed {
 		changedSet[c] = true
 	}
-	var keys map[string]bool
-	switch kind {
-	case TypeScript:
-		keys = tsModuleKeys(changed)
-	case Python:
-		keys = f.pyModuleNames(changed)
-	default:
+	if kind != TypeScript && kind != Python {
 		return nil
 	}
-	if len(keys) == 0 {
-		return nil
-	}
+	// Importers of importers matter too: a barrel (index.ts, a package
+	// __init__.py) re-exports the changed module, and the file that breaks
+	// imports the barrel. Each level is sorted closest-first, and nearer
+	// levels come first, so the limit drops the most distant files.
+	seen := changedSet
+	frontier := changed
 	var found []string
-	for _, c := range candidates {
-		if changedSet[c] {
-			continue
+	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+		var keys map[string]bool
+		if kind == TypeScript {
+			keys = tsModuleKeys(frontier)
+		} else {
+			keys = f.pyModuleNames(frontier)
 		}
-		imports := f.imports(kind, c)
-		for _, imp := range imports {
-			if keys[imp] {
-				found = append(found, c)
-				break
+		var level []string
+		for _, c := range candidates {
+			if seen[c] {
+				continue
+			}
+			for _, imp := range f.imports(kind, c) {
+				if keys[imp] {
+					level = append(level, c)
+					seen[c] = true
+					break
+				}
 			}
 		}
+		sort.SliceStable(level, func(i, j int) bool {
+			return distance(level[i], changed) < distance(level[j], changed)
+		})
+		found = append(found, level...)
+		frontier = level
 	}
-	sort.SliceStable(found, func(i, j int) bool {
-		return distance(found[i], changed) < distance(found[j], changed)
-	})
 	if limit > 0 && len(found) > limit {
 		found = found[:limit]
 	}
 	return found
 }
+
+// maxDepth is how many import hops Dependents follows.
+const maxDepth = 2
 
 // imports returns the normalized module keys a file imports.
 func (f *Finder) imports(kind Kind, path string) []string {

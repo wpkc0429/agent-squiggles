@@ -57,7 +57,8 @@ func TestTypeScriptDependents(t *testing.T) {
 	f := NewFinder(root)
 	changed := []string{filepath.Join(root, "src/lib/greet.ts")}
 	got := rels(root, f.Dependents(TypeScript, all, changed, 0))
-	want := []string{"src/alias.tsx", "src/app.ts", "src/cjs.js", "src/esm.ts", "src/lazy.ts", "src/lib/index.ts", "src/nested/deep/use.ts"}
+	// src/barrel.ts imports the lib/index.ts barrel, two hops away.
+	want := []string{"src/alias.tsx", "src/app.ts", "src/barrel.ts", "src/cjs.js", "src/esm.ts", "src/lazy.ts", "src/lib/index.ts", "src/nested/deep/use.ts"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dependents = %v\nwant %v", got, want)
 	}
@@ -133,5 +134,39 @@ func TestCacheInvalidation(t *testing.T) {
 	}
 	if got := rels(root, f.Dependents(TypeScript, all, changed, 0)); !reflect.DeepEqual(got, []string{"b.ts"}) {
 		t.Fatalf("after edit dependents = %v", got)
+	}
+}
+
+// The eval task ts-price-object: report.ts reaches money.ts only through a
+// renamed re-export in index.ts. Missing it let a real break through.
+func TestTypeScriptReExportChain(t *testing.T) {
+	root, all := setup(t, map[string]string{
+		"src/money.ts":     "export function formatPrice(cents: number) { return String(cents); }\n",
+		"src/index.ts":     "export { formatPrice as fmt } from \"./money\";\n",
+		"src/report.ts":    "import { fmt } from \"./index\";\nexport const r = fmt(1);\n",
+		"src/far.ts":       "import { r } from \"./report\";\nexport const f = r;\n",
+		"src/cart.ts":      "import { formatPrice } from \"./money\";\n",
+		"src/unrelated.ts": "export const u = 1;\n",
+	})
+	f := NewFinder(root)
+	got := rels(root, f.Dependents(TypeScript, all, []string{filepath.Join(root, "src/money.ts")}, 0))
+	want := []string{"src/cart.ts", "src/index.ts", "src/report.ts"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dependents = %v, want %v (two hops, not three)", got, want)
+	}
+}
+
+func TestPythonPackageReExport(t *testing.T) {
+	root, all := setup(t, map[string]string{
+		"billing/__init__.py": "from .payments import charge\n",
+		"billing/payments.py": "def charge(): ...\n",
+		"shop/checkout.py":    "from billing import charge\n",
+		"shop/other.py":       "import os\n",
+	})
+	f := NewFinder(root)
+	got := rels(root, f.Dependents(Python, all, []string{filepath.Join(root, "billing/payments.py")}, 0))
+	want := []string{"billing/__init__.py", "shop/checkout.py"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dependents = %v, want %v", got, want)
 	}
 }
