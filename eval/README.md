@@ -52,7 +52,11 @@ It needs `git`, a logged-in `codex`, Go, Node with TypeScript (the tasks link
 `--ts-modules`; by default the copy `agent-squiggles servers install
 typescript` puts in place), Python 3.8+ and `cargo`. The script copies your
 Codex auth file into each run's throwaway `CODEX_HOME` and deletes it as soon
-as the run ends. Each run uses your Codex quota.
+as the run ends, or when the script is interrupted or terminated. If the
+process is killed outright (for example by an out-of-memory killer), it cannot
+clean up: delete any `codex-home/auth.json` left under `--workdir`. Each run
+uses your Codex quota. Each run starts Codex and a language server or
+compiler, so expect a few GB of memory in use while it works.
 
 Results go to `eval/results/<date>/`: `runs.jsonl` (one record per run),
 `summary.md`, and the raw event streams in `transcripts/` (not committed).

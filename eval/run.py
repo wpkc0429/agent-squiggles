@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -107,6 +108,22 @@ def remove_auth(home):
         pass
 
 
+# The CODEX_HOME holding a copy of the auth file, and the Codex process,
+# while a run is in progress.
+_current_home = None
+_current_proc = None
+
+
+def _on_signal(signum, _frame):
+    """Stops Codex and removes the copied auth file before exiting on
+    SIGTERM, SIGINT or SIGHUP. SIGKILL cannot be caught; see eval/README.md."""
+    if _current_proc and _current_proc.poll() is None:
+        _current_proc.terminate()
+    if _current_home:
+        remove_auth(_current_home)
+    sys.exit(128 + signum)
+
+
 def task_env(run_dir, extra_path):
     env = dict(os.environ)
     # Codex's workspace-write sandbox only allows writes inside the workspace
@@ -125,16 +142,20 @@ def run_codex(home, repo, prompt, squiggles, env, timeout):
         cmd.insert(2, "--dangerously-bypass-hook-trust")
     cmd.append(prompt)
     env = dict(env, CODEX_HOME=home)
+    global _current_proc
     start = time.time()
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    _current_proc = p
     try:
-        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           env=env, timeout=timeout)
-        code, out, err = p.returncode, p.stdout.decode("utf-8", "replace"), p.stderr.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired as e:
+        out, err = p.communicate(timeout=timeout)
+        code = p.returncode
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, err = p.communicate()
         code = "timeout"
-        out = (e.stdout or b"").decode("utf-8", "replace")
-        err = (e.stderr or b"").decode("utf-8", "replace")
-    return code, out, err, time.time() - start
+    finally:
+        _current_proc = None
+    return code, out.decode("utf-8", "replace"), err.decode("utf-8", "replace"), time.time() - start
 
 
 def parse_events(text):
@@ -234,11 +255,14 @@ def run_one(task, cond, rep, args, bin_path, version):
     home = os.path.join(run_dir, "codex-home")
     squiggles = cond == "squiggles"
     env = task_env(run_dir, args.path_prepend)
+    global _current_home
+    _current_home = home
     try:
         make_codex_home(home, repo, args, bin_path if squiggles else None)
         code, out, err, secs = run_codex(home, repo, task["prompt"], squiggles, env, args.timeout)
     finally:
         remove_auth(home)
+        _current_home = None
         if squiggles:
             subprocess.run([bin_path, "stop"], cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     events = parse_events(out)
@@ -347,6 +371,8 @@ def main():
     if args.summarize:
         print(summarize(args.out))
         return
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _on_signal)
     os.makedirs(os.path.join(args.out, "transcripts"), exist_ok=True)
     args.workdir = args.workdir or tempfile.mkdtemp(prefix="agent-squiggles-eval-")
     os.makedirs(args.workdir, exist_ok=True)
