@@ -169,7 +169,7 @@ win.
   "bash": true,
   "autoInstall": true,
   "mode": "context",
-  "timeoutSeconds": 45,
+  "timeoutSeconds": 20,
   "languages": {
     "python": { "settings": { "python": { "analysis": { "typeCheckingMode": "strict" } } } },
     "go": { "disabled": false, "command": ["gopls"] }
@@ -181,11 +181,11 @@ win.
 | --- | --- | --- |
 | `severity` | `"error"` | Report `"error"` only, or `"warning"` and above. |
 | `maxDiagnostics` | `20` | Maximum diagnostics listed per report. |
-| `maxDependents` | `25` | Maximum importing files opened per check (TypeScript, Python). |
+| `maxDependents` | `25` | Maximum importing files opened per check (TypeScript, Python), counting importers of importers. |
 | `bash` | `true` | Also check files changed by shell commands. |
 | `autoInstall` | `true` | Install missing language servers on first use. |
 | `mode` | `"context"` | `"context"` adds a note for the model. `"block"` replaces the tool result with the report. |
-| `timeoutSeconds` | `45` | Upper bound for one check, including server startup. |
+| `timeoutSeconds` | `20` | Upper bound for one check. A check that runs out of time is skipped rather than holding up the agent. |
 | `languages.<id>` | | Per-language `disabled`, `command`, and `settings` (merged into the server's settings). |
 
 Set `AGENT_SQUIGGLES_DISABLE=1` to switch everything off for a session.
@@ -234,7 +234,9 @@ measure the full check, from the snapshot diff to the report:
 
 The first check in a session also pays for server startup. The
 `SessionStart` hook starts servers in the background so the first edit does
-not wait for it. For Rust, the first `cargo check` in a workspace also
+not wait for it. If a server is still loading a large workspace when an edit
+arrives, the check waits at most 10 seconds and is then skipped, so the agent
+is never held up by a slow load. For Rust, the first `cargo check` in a workspace also
 compiles its dependencies once, which can take minutes on large projects;
 `cargo check` time grows with the size of the crate being rebuilt.
 
@@ -255,8 +257,9 @@ compiles its dependencies once, which can take minutes on large projects;
 - Checking shell-command edits needs a git repository. Without git, only
   `apply_patch` edits are checked.
 - TypeScript and Python cross-file checks follow relative imports and
-  `tsconfig` `paths` aliases, up to `maxDependents` files. Bare package
-  imports inside monorepos are not followed yet.
+  `tsconfig` `paths` aliases two hops deep (so callers behind a barrel file
+  are covered), up to `maxDependents` files. Bare package imports inside
+  monorepos are not followed yet.
 - Rust: when a crate already fails to compile, cargo does not check the
   crates that depend on it, so breakage there shows up only once the first
   crate compiles again. `check --base` cannot compare Rust against a past

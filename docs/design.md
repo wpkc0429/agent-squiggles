@@ -167,8 +167,11 @@ more appears, exactly one is reported.
 - **TypeScript and Python:** servers only report on open documents. The
   `deps` package finds importers with a cached regex scan: relative imports,
   `tsconfig`/`jsconfig` `paths` aliases, `index` barrels, ESM `.js`
-  specifiers, and Python absolute, relative and `src/` layouts. It opens up
-  to `maxDependents` of them, closest first.
+  specifiers, and Python absolute, relative and `src/` layouts. It follows
+  importers two hops deep, because the file that breaks often imports a
+  barrel (`index.ts`, a package `__init__.py`) that re-exports the edited
+  module, and opens up to `maxDependents` of them, nearest hop and closest
+  directory first.
 
 ## The daemon
 
@@ -184,6 +187,12 @@ per-workspace daemon keeps them warm:
   `~/.local/share/agent-squiggles/logs/`). The `SessionStart` hook starts it
   early and warms servers in the background. The hook itself returns
   immediately, because older Codex builds skip `async` hooks.
+- A server's initial workspace load (gopls on a large module or a cold build
+  cache can take minutes) runs without the engine lock. A check that arrives
+  meanwhile waits at most 10 seconds and is then skipped with a notice;
+  `PreToolUse` never waits for language servers at all (Rust baselines have
+  their own lock). A slow check is worse than none, so one check is capped at
+  `timeoutSeconds` (20 s by default).
 
 ## Hook output
 
