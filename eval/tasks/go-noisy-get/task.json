@@ -1,0 +1,10 @@
+{
+  "language": "go",
+  "prompt": "Change Inventory.Get in inventory/inventory.go to return (Item, error) instead of (Item, bool), returning a new exported ErrNotFound when the SKU is missing. Update the rest of the code so everything builds and the tests pass.",
+  "check": "go build ./... && go vet ./... && go test ./...",
+  "traps": [
+    "two dozen unrelated .Get( calls (url.Values, http.Header, config.Values, cache.Cache)",
+    "an interface in pricing that *Inventory must keep satisfying",
+    "a method value passed as a func(string) (Item, bool)"
+  ]
+}

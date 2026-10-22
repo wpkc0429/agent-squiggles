@@ -46,6 +46,12 @@ repository and a fresh, throwaway `CODEX_HOME`.
 | `ts-price-object` | TypeScript | positional args → options object | a caller uses a renamed re-export (`fmt`); another a namespace import |
 | `py-charge-currency` | Python | new keyword-only `currency` | callers via `import ... as pay` and `payments.charge(...)` |
 | `rs-parse-result` | Rust | `parse` returns `Result` | a caller via `use ... as load`; the binary and an integration test |
+| `go-noisy-get` | Go | `Inventory.Get` returns `(Item, error)` | 16 `.Get(` calls, most of them on other types; an interface; a method value passed as a `func` |
+| `ts-legacy-errors` | TypeScript | positional args → options object | about 40 known type errors in `src/legacy/` make every `tsc` run fail; a renamed re-export |
+
+For tasks with known, pre-existing errors (`known_errors` in `task.json`), a
+checker run that fails only on those counts as a pass, and the task's check
+only fails on errors outside them.
 
 ## Running it
 

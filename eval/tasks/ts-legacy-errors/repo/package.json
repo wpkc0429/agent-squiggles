@@ -1,0 +1,5 @@
+{
+  "name": "player",
+  "private": true,
+  "type": "module"
+}

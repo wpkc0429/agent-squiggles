@@ -1,0 +1,14 @@
+{
+  "language": "typescript",
+  "prompt": "Change formatDuration in src/time.ts to take a single options object { seconds: number; style?: Style } instead of positional parameters. Update the rest of the code so it type-checks, apart from the known errors in src/legacy/.",
+  "check": "node_modules/.bin/tsc -p . | grep 'error TS' | grep -v '^src/legacy/' | grep -q . && exit 1; exit 0",
+  "known_errors": "^src/legacy/",
+  "setup": {
+    "node_modules": "typescript"
+  },
+  "traps": [
+    "about 40 known type errors in src/legacy/ make every tsc run fail",
+    "src/widgets/badge.ts calls it through a renamed re-export (dur)",
+    "src/export/csv.ts uses a namespace import"
+  ]
+}
