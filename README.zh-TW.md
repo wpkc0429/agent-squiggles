@@ -39,6 +39,16 @@ These errors were reported by the compiler or language server and were caused by
 - **不擋路。** 報告是以附加脈絡的方式交給模型，工具呼叫本身照樣成功，agent 不會誤以為編輯失敗。想要硬性攔截的話可以改用 `block` 模式。
 - **單一靜態執行檔**，用 Go 撰寫，沒有執行期相依。
 
+## 實際有沒有幫助？
+
+這是量出來的，不是用猜的。[`eval/`](eval) 讓 Codex 在有、沒有 agent-squiggles 的情況下做同一組任務。每個任務都有 AGENTS.md 告訴 Codex 要跑哪個檢查指令；對照組也裝了同樣的 hook，只是停用。最近一批（36 次，`gpt-5.6-luna`，medium）的結果：
+
+- 兩組都完成了所有任務，時間與 token 用量沒有差別；
+- 型別或編譯錯誤被帶到建置、型別檢查或測試階段的次數：**沒裝 18 次中 3 次，有裝 18 次中 0 次**；
+- agent-squiggles 回報錯誤的 6 次裡，Codex 都在第一次建置、檢查或測試前就修好了。
+
+效果不大：這個模型多半自己就找得到所有呼叫端，而在小專案裡，一次失敗的檢查只多花幾秒。它省下的是偶爾一輪「改錯、失敗、再修」。方法、原始數據與限制見 [eval/results/2026-10-22-placebo](eval/results/2026-10-22-placebo/NOTES.md)。
+
 ## 安裝
 
 需要支援 hook 的 Codex CLI、git，以及 Linux 或 macOS（Windows 請用 WSL）。

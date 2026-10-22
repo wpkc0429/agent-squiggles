@@ -73,6 +73,24 @@ it. It never ran the compiler and never opened `main.go` on its own.
   `block` mode.
 - **One static binary**, written in Go with no runtime dependencies.
 
+## Does it help?
+
+It is measured, not assumed. [`eval/`](eval) runs Codex on the same tasks
+with and without agent-squiggles; every task has an `AGENTS.md` that tells
+Codex which checker to run, and the baseline has the same hooks installed
+but switched off. In the latest batch (36 runs, `gpt-5.6-luna`, medium):
+
+- both conditions solved every task, with no difference in time or tokens;
+- a compile or type error reached Codex's build, type-check or test step in
+  **3 of 18 runs without** agent-squiggles and **0 of 18 with** it;
+- in the 6 runs where agent-squiggles reported errors, Codex fixed them before
+  its first build, type-check or test run.
+
+The effect is small: this model usually finds every caller on its own, and
+on small repositories a failed checker run costs seconds. What it saves is
+the occasional edit → fail → fix round. Method, raw results and caveats:
+[eval/results/2026-10-22-placebo](eval/results/2026-10-22-placebo/NOTES.md).
+
 ## Install
 
 Requires Codex CLI with hooks support, git, and Linux or macOS (on Windows,

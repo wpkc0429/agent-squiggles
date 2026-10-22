@@ -53,6 +53,14 @@ For tasks with known, pre-existing errors (`known_errors` in `task.json`), a
 checker run that fails only on those counts as a pass, and the task's check
 only fails on errors outside them.
 
+## Results so far
+
+| Batch | agent-squiggles | Baseline | Notes |
+| --- | --- | --- | --- |
+| [2026-10-21](results/2026-10-21/NOTES.md) | v0.2.0 | no hooks | found two bugs (a missed re-export caller, a slow load holding up the agent), fixed in v0.2.1 |
+| [2026-10-22-v0.2.1](results/2026-10-22-v0.2.1/NOTES.md) | v0.2.1 | no hooks | no cost from the hooks; agent-squiggles reported nothing, so the difference between conditions was not its doing |
+| [2026-10-22-placebo](results/2026-10-22-placebo/NOTES.md) | v0.2.1 | placebo | 36 runs; a type error reached the checker in 3/18 vs 0/18 runs; the 6 reports were each fixed before the first checker run |
+
 ## Running it
 
 ```sh
